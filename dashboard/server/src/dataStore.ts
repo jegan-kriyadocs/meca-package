@@ -140,9 +140,11 @@ function scanArticleLocations(batchId: string): Map<string, ArticleLocation> {
   const packagesRoot = batchPackagesRoot(batchId);
   for (const category of CATEGORIES) {
     const categoryDir = join(packagesRoot, category);
-    if (!existsSync(categoryDir)) continue;
+    if (!existsSync(categoryDir) || !statSync(categoryDir).isDirectory()) continue;
     for (const articleId of readdirSync(categoryDir)) {
+      if (articleId.startsWith(".")) continue;
       const articleDir = join(categoryDir, articleId);
+      if (!existsSync(articleDir) || !statSync(articleDir).isDirectory()) continue;
       const files = readdirSync(articleDir);
       const zipFile = files.find((f) => f.endsWith(".zip")) ?? null;
       const certFile = files.find((f) => f.endsWith("_Certification_Report.html")) ?? null;
