@@ -71,75 +71,94 @@ class InputProvider(ABC):
 
 
 class LocalInputProvider(InputProvider):
-    """Reads ``<ArticleID>.zip`` archives from a local directory.
+    """Reads articles from a local directory, supporting both raw article folders and .zip archives.
 
     Extraction happens here (not in a shared reader) specifically so the
     rest of the pipeline — everything from :class:`~meca_engine.extraction.xml_loader.XmlLoader`
-    onward — behaves exactly as it does today; see the module docstring
-    for why this does not reuse :class:`~meca_engine.input.readers.local_reader.LocalFolderReader`.
+    onward — behaves exactly as it does today. For uncompressed folders, files are used
+    directly in place without temporary extraction overhead.
     """
 
-    def __init__(self, local_path: str) -> None:
+    def __init__(self, local_path: str, input_format: str = "auto") -> None:
         """Initialize the provider.
 
         Args:
-            local_path: Directory containing one ``<ArticleID>.zip`` per article.
+            local_path: Directory containing article folders and/or ``<ArticleID>.zip`` archives.
+            input_format: Format filter - ``"directory"``, ``"zip"``, or ``"auto"`` (default).
         """
         self._root = Path(local_path)
+        self.input_format = (input_format or "auto").lower()
 
     def list_articles(self) -> tuple[str, ...]:
-        """List every ``.zip`` archive's stem under ``local_path``, sorted for determinism."""
-        return tuple(sorted(p.stem for p in self._root.glob("*.zip")))
+        """List all article IDs under ``local_path``, respecting the configured input_format."""
+        if not self._root.is_dir():
+            return ()
+        article_ids: set[str] = set()
+        # 1. Discover directories if format is "directory" or "auto"
+        if self.input_format in ("directory", "auto"):
+            for p in self._root.iterdir():
+                if p.is_dir() and not p.name.startswith(".") and p.name != "__MACOSX":
+                    article_ids.add(p.name)
+        # 2. Discover .zip archives if format is "zip" or "auto"
+        if self.input_format in ("zip", "auto"):
+            for p in self._root.glob("*.zip"):
+                if not p.name.startswith(".") and "__MACOSX" not in p.name:
+                    article_ids.add(p.stem)
+        return tuple(sorted(article_ids))
 
     def stage_article(self, article_id: str) -> StagedArticle:
-        """Extract ``<article_id>.zip`` to a fresh temp directory and locate its source XML.
+        """Stage an article from either a local directory or a .zip archive based on input_format.
 
         Raises:
-            SourceUnavailableError: The archive does not exist, or is not a
-                readable ZIP (empty/corrupt) — a source-data problem, not
-                an engine defect.
-            InvalidArticlePackageError: The archive is a readable ZIP but
-                contains no source XML file at all, or contains a member
-                path that would extract outside the staging directory
-                ("zip slip") — a corrupt/malicious archive, never a
-                genuine publisher submission.
+            SourceUnavailableError: Neither directory nor readable archive exists matching input_format.
+            InvalidArticlePackageError: Source directory or archive contains no source XML,
+                or archive contains a path traversal member ("zip slip").
         """
+        dir_path = self._root / article_id
         zip_path = self._root / f"{article_id}.zip"
-        tmp_path = Path(tempfile.mkdtemp(prefix=f"am_{article_id}_"))
-        try:
+
+        # Case 1: Directory exists (if allowed by format)
+        if self.input_format in ("directory", "auto") and dir_path.is_dir():
+            source_xml_path = _find_source_xml(dir_path, article_id)
+            return StagedArticle(
+                article_id=article_id,
+                staged_root=source_xml_path.parent,
+                source_xml_path=source_xml_path,
+                extraction_root=None,
+            )
+
+        # Case 2: Zip archive exists (if allowed by format)
+        if self.input_format in ("zip", "auto") and zip_path.is_file():
+            tmp_path = Path(tempfile.mkdtemp(prefix=f"am_{article_id}_"))
             try:
-                with zipfile.ZipFile(zip_path) as archive:
-                    names = [n for n in archive.namelist() if "__MACOSX" not in n]
-                    _reject_unsafe_members(names, tmp_path, article_id)
-                    archive.extractall(tmp_path, members=names)
-            except FileNotFoundError as exc:
-                raise SourceUnavailableError(
-                    f"Source archive not found for {article_id!r}: {zip_path}",
-                    article_id=article_id,
-                    stage=_STAGE,
-                    inner_cause=exc,
-                ) from exc
-            except zipfile.BadZipFile as exc:
-                raise SourceUnavailableError(
-                    f"Source archive for {article_id!r} is corrupt or not a valid ZIP: {exc}",
-                    article_id=article_id,
-                    stage=_STAGE,
-                    inner_cause=exc,
-                ) from exc
-            source_xml_path = _find_source_xml(tmp_path, article_id)
-        except BaseException:
-            # Never leave a partial/unusable extraction behind on disk —
-            # mirrors 13_LLD_04_PIPELINE_SCALABILITY_VALIDATION.md §9.4's
-            # existing "working directory removed on terminal failure"
-            # lifecycle (see the module-level `Stager.cleanup()` in
-            # `input/staging.py`, this provider's own predecessor).
-            shutil.rmtree(tmp_path, ignore_errors=True)
-            raise
-        return StagedArticle(
+                try:
+                    with zipfile.ZipFile(zip_path) as archive:
+                        names = [n for n in archive.namelist() if "__MACOSX" not in n]
+                        _reject_unsafe_members(names, tmp_path, article_id)
+                        archive.extractall(tmp_path, members=names)
+                except zipfile.BadZipFile as exc:
+                    raise SourceUnavailableError(
+                        f"Source archive for {article_id!r} is corrupt or not a valid ZIP: {exc}",
+                        article_id=article_id,
+                        stage=_STAGE,
+                        inner_cause=exc,
+                    ) from exc
+                source_xml_path = _find_source_xml(tmp_path, article_id)
+            except BaseException:
+                shutil.rmtree(tmp_path, ignore_errors=True)
+                raise
+            return StagedArticle(
+                article_id=article_id,
+                staged_root=source_xml_path.parent,
+                source_xml_path=source_xml_path,
+                extraction_root=tmp_path,
+            )
+
+        # Case 3: Neither exists
+        raise SourceUnavailableError(
+            f"Source for {article_id!r} not found in {self._root} for input_format={self.input_format!r}",
             article_id=article_id,
-            staged_root=source_xml_path.parent,
-            source_xml_path=source_xml_path,
-            extraction_root=tmp_path,
+            stage=_STAGE,
         )
 
 
@@ -179,6 +198,7 @@ class S3InputProvider(InputProvider):
         bucket: str | None = None,
         prefix: str | None = None,
         region: str | None = None,
+        input_format: str = "auto",
     ) -> None:
         """Initialize the S3 input provider.
 
@@ -186,6 +206,7 @@ class S3InputProvider(InputProvider):
             bucket: S3 bucket name. If omitted, read from S3_BUCKET_NAME env var.
             prefix: Key prefix within the bucket. If omitted, read from S3_INPUT_PREFIX.
             region: AWS region. If omitted, read from AWS_REGION or defaults to us-east-1.
+            input_format: Format filter - ``"directory"``, ``"zip"``, or ``"auto"`` (default).
         """
         self.bucket = (
             bucket
@@ -204,6 +225,7 @@ class S3InputProvider(InputProvider):
             or os.environ.get("AWS_DEFAULT_REGION")
             or "us-east-1"
         )
+        self.input_format = (input_format or "directory").lower()
         self._client = None
 
     def _get_client(self):
@@ -228,7 +250,7 @@ class S3InputProvider(InputProvider):
         return self._client
 
     def list_articles(self) -> tuple[str, ...]:
-        """List all article IDs available in the configured S3 bucket."""
+        """List all article IDs available in the configured S3 bucket matching input_format."""
         if not self.bucket:
             raise ProviderNotConfiguredError(
                 "S3InputProvider is not configured: S3_BUCKET_NAME environment variable is not set.",
@@ -244,18 +266,20 @@ class S3InputProvider(InputProvider):
             for page in paginator.paginate(
                 Bucket=self.bucket, Prefix=prefix_with_slash, Delimiter="/"
             ):
-                for obj in page.get("Contents", []):
-                    key = obj["Key"]
-                    if key.endswith(".zip"):
-                        name = key[len(prefix_with_slash) :]
-                        stem = Path(name).stem
-                        if stem and "__MACOSX" not in key:
-                            article_ids.add(stem)
-                for cp in page.get("CommonPrefixes", []):
-                    p = cp["Prefix"]
-                    name = p[len(prefix_with_slash) :].rstrip("/")
-                    if name:
-                        article_ids.add(name)
+                if self.input_format in ("zip", "auto"):
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        if key.endswith(".zip"):
+                            name = key[len(prefix_with_slash) :]
+                            stem = Path(name).stem
+                            if stem and "__MACOSX" not in key:
+                                article_ids.add(stem)
+                if self.input_format in ("directory", "auto"):
+                    for cp in page.get("CommonPrefixes", []):
+                        p = cp["Prefix"]
+                        name = p[len(prefix_with_slash) :].rstrip("/")
+                        if name:
+                            article_ids.add(name)
         except Exception as exc:
             raise SourceUnavailableError(
                 f"Failed to list articles from S3 bucket {self.bucket!r} (prefix={self.prefix!r}): {exc}",
@@ -280,13 +304,13 @@ class S3InputProvider(InputProvider):
         local_zip = tmp_path / f"{article_id}.zip"
 
         try:
-            # First attempt: single zip archive download
             downloaded_zip = False
-            try:
-                client.download_file(self.bucket, zip_key, str(local_zip))
-                downloaded_zip = True
-            except Exception:
-                downloaded_zip = False
+            if self.input_format in ("zip", "auto"):
+                try:
+                    client.download_file(self.bucket, zip_key, str(local_zip))
+                    downloaded_zip = True
+                except Exception:
+                    downloaded_zip = False
 
             if downloaded_zip:
                 with zipfile.ZipFile(local_zip) as archive:
@@ -294,8 +318,7 @@ class S3InputProvider(InputProvider):
                     _reject_unsafe_members(names, tmp_path, article_id)
                     archive.extractall(tmp_path, members=names)
                 source_xml_path = _find_source_xml(tmp_path, article_id)
-            else:
-                # Second attempt: article directory of files
+            elif self.input_format in ("directory", "auto"):
                 folder_prefix = f"{prefix_with_slash}{article_id}/"
                 paginator = client.get_paginator("list_objects_v2")
                 downloaded_any = False
@@ -317,6 +340,12 @@ class S3InputProvider(InputProvider):
                         stage=_STAGE,
                     )
                 source_xml_path = _find_source_xml(tmp_path, article_id)
+            else:
+                raise SourceUnavailableError(
+                    f"Source for {article_id!r} not found in S3 bucket {self.bucket!r} for format {self.input_format!r}",
+                    article_id=article_id,
+                    stage=_STAGE,
+                )
 
         except BaseException:
             shutil.rmtree(tmp_path, ignore_errors=True)
@@ -330,19 +359,17 @@ class S3InputProvider(InputProvider):
         )
 
 
-def create_input_provider(settings: InputSettings) -> InputProvider:
+def create_input_provider(settings: InputSettings, input_format: str = "auto") -> InputProvider:
     """Provider Factory: select an :class:`InputProvider` from configuration.
 
     Raises:
         ProviderNotConfiguredError: If ``settings.provider`` names a
-            provider this phase does not recognize at all (schema
-            validation already rejects anything outside ``LOCAL``/``S3``,
-            so this is defense-in-depth, not a reachable production path).
+            provider this phase does not recognize at all.
     """
     if settings.provider == "LOCAL":
-        return LocalInputProvider(settings.local_path)
+        return LocalInputProvider(settings.local_path, input_format=input_format)
     if settings.provider == "S3":
-        return S3InputProvider()
+        return S3InputProvider(input_format=input_format)
     raise ProviderNotConfiguredError(f"Unknown input provider: {settings.provider!r}", stage=_STAGE)
 
 

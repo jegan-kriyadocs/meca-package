@@ -37,6 +37,61 @@ function newBatchId(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
+export interface StartRunOptions {
+  articleIds?: string[];
+  limit?: number;
+  offset?: number;
+  inputFormat?: "directory" | "zip";
+}
+
+export interface InputSummary {
+  provider: "LOCAL" | "S3" | string;
+  path: string;
+  total: number;
+  articles: string[];
+  error: string | null;
+}
+
+export function getInputSummary(format: string = "directory"): Promise<InputSummary> {
+  return new Promise((resolve) => {
+    const pythonPath = [PYTHON_PATH_EXTRA, join(MECA_ENGINE_ROOT, "src")].filter(Boolean).join(":");
+    const args = ["scripts/list_input_articles.py", "--input-format", format || "directory"];
+    const child = spawn(PYTHON_BIN, args, {
+      cwd: MECA_ENGINE_ROOT,
+      env: { ...process.env, PYTHONPATH: pythonPath },
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+
+    child.on("close", (code) => {
+      try {
+        if (code === 0 && stdout.trim()) {
+          resolve(JSON.parse(stdout.trim()) as InputSummary);
+        } else {
+          resolve({
+            provider: "UNKNOWN",
+            path: "",
+            total: 0,
+            articles: [],
+            error: stderr.trim() || `Script exited with code ${code}`,
+          });
+        }
+      } catch (err) {
+        resolve({
+          provider: "UNKNOWN",
+          path: "",
+          total: 0,
+          articles: [],
+          error: String(err),
+        });
+      }
+    });
+  });
+}
+
 class RunController {
   private child: ChildProcess | null = null;
   private phase: RunPhase = "idle";
@@ -67,10 +122,16 @@ class RunController {
     return status;
   }
 
-  start(articleIds?: string[]): { batchId: string } {
+  start(optionsOrArticleIds?: string[] | StartRunOptions): { batchId: string } {
     if (this.phase === "starting" || this.phase === "running") {
       throw new Error("A migration is already running");
     }
+
+    const options: StartRunOptions = Array.isArray(optionsOrArticleIds)
+      ? { articleIds: optionsOrArticleIds }
+      : optionsOrArticleIds ?? {};
+
+    const { articleIds, limit, offset, inputFormat } = options;
 
     const batchId = newBatchId();
     const batchDir = join(BATCHES_ROOT, batchId);
@@ -79,6 +140,15 @@ class RunController {
     const args = ["scripts/archive_migration_batch.py", "--batch-id", batchId];
     if (articleIds && articleIds.length > 0) {
       args.push("--article-ids", articleIds.join(","));
+    }
+    if (limit !== undefined && limit !== null && Number(limit) > 0) {
+      args.push("--limit", String(limit));
+    }
+    if (offset !== undefined && offset !== null && Number(offset) > 0) {
+      args.push("--offset", String(offset));
+    }
+    if (inputFormat) {
+      args.push("--input-format", inputFormat);
     }
 
     const pythonPath = [PYTHON_PATH_EXTRA, join(MECA_ENGINE_ROOT, "src")]

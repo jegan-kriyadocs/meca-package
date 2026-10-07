@@ -252,3 +252,18 @@ export interface MissingFileStat {
   file: string;
   occurrences: number;
 }
+
+export interface InputSummary {
+  provider: "LOCAL" | "S3" | string;
+  path: string;
+  total: number;
+  articles: string[];
+  error: string | null;
+}
+
+export interface StartRunOptions {
+  articleIds?: string[];
+  limit?: number;
+  offset?: number;
+  inputFormat?: "directory" | "zip";
+}

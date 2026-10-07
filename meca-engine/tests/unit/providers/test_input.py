@@ -169,3 +169,40 @@ def test_s3_input_provider_list_articles(monkeypatch) -> None:
 
     assert article_ids == ("CS20240001", "CS20240002", "CS20240003")
 
+
+def test_local_input_provider_modes(tmp_path) -> None:
+    # Set up both a directory article and a zip article
+    dir_article = tmp_path / "art-dir"
+    dir_article.mkdir()
+    (dir_article / "art-dir.xml").write_text("<article/>")
+
+    _make_article_zip(tmp_path, "art-zip")
+
+    # 1. Directory mode: only discovers the directory
+    dir_provider = LocalInputProvider(str(tmp_path), input_format="directory")
+    assert dir_provider.list_articles() == ("art-dir",)
+
+    # 2. ZIP mode: only discovers the zip
+    zip_provider = LocalInputProvider(str(tmp_path), input_format="zip")
+    assert zip_provider.list_articles() == ("art-zip",)
+
+    # 3. Auto mode: discovers both
+    auto_provider = LocalInputProvider(str(tmp_path), input_format="auto")
+    assert auto_provider.list_articles() == ("art-dir", "art-zip")
+
+
+def test_local_input_provider_stages_from_directory_directly(tmp_path) -> None:
+    article_dir = tmp_path / "direct-art"
+    article_dir.mkdir()
+    (article_dir / "direct-art.xml").write_text("<article id='direct'/>")
+    (article_dir / "figure1.png").write_bytes(b"dummy image")
+
+    provider = LocalInputProvider(str(tmp_path), input_format="directory")
+    staged = provider.stage_article("direct-art")
+
+    assert staged.article_id == "direct-art"
+    assert staged.staged_root == article_dir
+    assert staged.source_xml_path == article_dir / "direct-art.xml"
+    assert staged.extraction_root is None  # Directly referenced without temp dir extraction overhead
+
+

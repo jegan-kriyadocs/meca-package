@@ -61,6 +61,7 @@ def build_processing_service(
     article_id_filter: frozenset[str] | None = None,
     limit: int | None = None,
     offset: int = 0,
+    input_format: str = "directory",
 ) -> ProcessingService:
     """Wire every dependency and return a ready-to-run :class:`ProcessingService`.
 
@@ -75,6 +76,9 @@ def build_processing_service(
             direct CLI invocation has always had.
         article_id_filter: If given, only these article ids are processed
             (e.g. "restart failed/manual-review articles only").
+        limit: Maximum number of articles to process.
+        offset: Number of articles to skip from start.
+        input_format: Format filter - "directory" (default), "zip", or "auto".
     """
     input_settings = replace(
         runtime_config.input,
@@ -96,7 +100,7 @@ def build_processing_service(
 
     output_settings = replace(runtime_config.output, local_path=str(output_local_path))
 
-    input_provider = create_input_provider(input_settings)
+    input_provider = create_input_provider(input_settings, input_format=input_format)
     output_provider = create_output_provider(output_settings)
 
     namespace_manager = NamespaceManager(loader.load_namespace_config().namespaces)

@@ -50,6 +50,12 @@ def _parse_args() -> argparse.Namespace:
         default=0,
         help="Number of articles to skip from the beginning (e.g. 0, 50, 100).",
     )
+    parser.add_argument(
+        "--input-format",
+        choices=["directory", "zip", "auto"],
+        default="directory",
+        help="Input format to process: 'directory' (default, uncompressed article folders), 'zip' (.zip archives), or 'auto' (both).",
+    )
     return parser.parse_args()
 
 
@@ -76,6 +82,7 @@ def main() -> int:
         article_id_filter=article_id_filter,
         limit=args.limit,
         offset=args.offset,
+        input_format=args.input_format,
     )
     service.run()
     return 0

@@ -15,6 +15,8 @@ import type {
   SummaryStats,
   ValidationStats,
   WarningStats,
+  InputSummary,
+  StartRunOptions,
 } from "./types";
 
 async function getJson<T>(path: string): Promise<T> {
@@ -114,7 +116,12 @@ export const api = {
 
   getRunStatus: () => getJson<RunStatus>("/run/status"),
   getRunLogs: () => getJson<string[]>("/run/logs"),
-  startRun: (articleIds?: string[]) => postJson<{ batchId: string }>("/run/start", { articleIds }),
+  getInputSummary: (format?: string) =>
+    getJson<InputSummary>(`/input/summary${format ? `?format=${encodeURIComponent(format)}` : ""}`),
+  startRun: (options?: StartRunOptions | string[]) => {
+    const payload = Array.isArray(options) ? { articleIds: options } : options ?? {};
+    return postJson<{ batchId: string }>("/run/start", payload);
+  },
   pauseRun: () => postJson<{ ok: true }>("/run/pause"),
   resumeRun: () => postJson<{ ok: true }>("/run/resume"),
   stopAfterCurrent: () => postJson<{ ok: true }>("/run/stop-after-current"),

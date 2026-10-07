@@ -19,7 +19,7 @@ import {
   getValidationStats,
 } from "./dataStore.js";
 import { listBatches, resolveBatchId, resolveReportFile } from "./batchStore.js";
-import { runController } from "./runController.js";
+import { runController, getInputSummary } from "./runController.js";
 import { readRuntimeConfig, updateRuntimeConfig } from "./configStore.js";
 import { getArticleXml, XML_KINDS } from "./xmlStore.js";
 import { getNotes, setNote } from "./notesStore.js";
@@ -316,10 +316,25 @@ router.get("/run/logs", (_req, res) => {
   res.json(runController.getLogs());
 });
 
+router.get("/input/summary", async (req, res) => {
+  try {
+    const format = (req.query.format as string) || "directory";
+    const summary = await getInputSummary(format);
+    res.json(summary);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 router.post("/run/start", (req, res) => {
   try {
-    const { articleIds } = req.body as { articleIds?: string[] };
-    res.json(runController.start(articleIds));
+    const { articleIds, limit, offset, inputFormat } = req.body as {
+      articleIds?: string[];
+      limit?: number;
+      offset?: number;
+      inputFormat?: "directory" | "zip";
+    };
+    res.json(runController.start({ articleIds, limit, offset, inputFormat }));
   } catch (err) {
     res.status(409).json({ error: err instanceof Error ? err.message : String(err) });
   }
