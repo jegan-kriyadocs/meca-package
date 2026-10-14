@@ -1,0 +1,96 @@
+// ==============================================================================
+// PRISMA SCHEMA DEFINITION
+// ==============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------------------------
+// 1. BATCHES: Records each migration batch run
+// ------------------------------------------------------------------------------
+model Batch {
+  id                String    @id // e.g. "2026-10-09T07-00-00-000Z"
+  startedAt         DateTime  @default(now())
+  completedAt       DateTime?
+  status            String    @default("running") // "running", "completed", "failed", "cancelled"
+  totalArticles     Int       @default(0)
+  uploadedCount     Int       @default(0)
+  manualReviewCount Int       @default(0)
+  failedCount       Int       @default(0)
+  elapsedSeconds    Float?
+
+  // Relations
+  articles      Article[]
+  manualReviews ManualReview[]
+  logs          BatchLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("batches")
+}
+
+// ------------------------------------------------------------------------------
+// 2. ARTICLES: Results for each processed article
+// ------------------------------------------------------------------------------
+model Article {
+  id      String @id // e.g. "AR-2024-001"
+  batchId String
+  batch   Batch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  journalCode      String? // e.g. "JAS"
+  status           String // "uploaded", "manual_review", "failed"
+  confidenceScore  Float? // 0.0 to 1.0
+  warningsCount    Int     @default(0)
+  errorsCount      Int     @default(0)
+  validationStatus String? // "pass", "warning", "error"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([batchId])
+  @@index([status])
+  @@map("articles")
+}
+
+// ------------------------------------------------------------------------------
+// 3. MANUAL REVIEWS: Operator notes and approvals
+// ------------------------------------------------------------------------------
+model ManualReview {
+  id        Int    @id @default(autoincrement())
+  articleId String
+  batchId   String
+  batch     Batch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  status   String  @default("pending") // "pending", "approved", "rejected"
+  note     String  @default("")
+  reviewer String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([batchId, articleId])
+  @@map("manual_reviews")
+}
+
+// ------------------------------------------------------------------------------
+// 4. BATCH LOGS: Stored logs from the engine and system
+// ------------------------------------------------------------------------------
+model BatchLog {
+  id      Int    @id @default(autoincrement())
+  batchId String
+  batch   Batch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  level     String   @default("INFO") // "INFO", "WARN", "ERROR", "DEBUG"
+  message   String
+  timestamp DateTime @default(now())
+
+  @@index([batchId])
+  @@map("batch_logs")
+}

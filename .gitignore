@@ -22,10 +22,15 @@ node_modules/
 dashboard/server/dist/
 dashboard/web/dist/
 
+# Database dumps / scripts
+dashboard/server/prisma/init.sql
+*.sql
+
 # Secrets — real secrets come from a secrets manager, never committed here
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 # Editors
 .vscode/

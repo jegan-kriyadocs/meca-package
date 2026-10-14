@@ -1,0 +1,51 @@
+services:
+  # ==============================================================================
+  # PRODUCTION MECA PLATFORM APP (AWS ECS / Production Docker)
+  # ==============================================================================
+  meca-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: meca-app-prod
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4000}:${PORT:-4000}"
+
+    environment:
+      - PORT
+      - NODE_ENV
+      - MECA_ENGINE_ENVIRONMENT
+
+      # Database (AWS RDS PostgreSQL)
+      - DATABASE_URL
+
+      # AWS S3 (Input Source)
+      - AWS_REGION
+      - S3_BUCKET_NAME
+      - S3_INPUT_PREFIX
+
+      # SFTP (Output Destination)
+      - SFTP_HOST
+      - SFTP_USER
+      - SFTP_PASSWORD
+      - SFTP_PORT
+      - SFTP_REMOTE_DIR
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:$${PORT:-4000}/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4096M
+        reservations:
+          cpus: "0.5"
+          memory: 1024M
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3

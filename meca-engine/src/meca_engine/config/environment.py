@@ -111,7 +111,7 @@ def load_environment_settings(env: Mapping[str, str] | None = None) -> Environme
         user=source.get(ENV_VAR_SFTP_USER, source.get("MECA_SFTP_USER", "")),
         password=source.get(ENV_VAR_SFTP_PASSWORD, source.get("MECA_SFTP_PASSWORD", "")),
         remote_dir=source.get(
-            ENV_VAR_SFTP_REMOTE_DIR, source.get("MECA_SFTP_REMOTE_DIR", "/sftp/meca")
+            ENV_VAR_SFTP_REMOTE_DIR, source.get("MECA_SFTP_REMOTE_DIR", ".")
         ),
         key_path=source.get(ENV_VAR_SFTP_KEY_PATH, ""),
         delete_local_after_upload=_parse_bool(source.get(ENV_VAR_SFTP_DELETE_LOCAL, "false")),

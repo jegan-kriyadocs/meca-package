@@ -1,0 +1,34 @@
+# Git & OS files
+.git
+.gitignore
+.DS_Store
+**/.DS_Store
+
+# Secrets & Environment files (CRITICAL SECURITY: Never bake into image!)
+.env
+.env.*
+!.env.local.example
+!.env.production.example
+*.pem
+*.key
+*.cert
+*.crt
+
+# Mac Python virtual environments & bytecode
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.coverage
+
+# Mac Node dependencies & local builds
+**/node_modules
+**/dist
+dashboard/web/dist
+dashboard/server/dist
+
+# Local output, logs & runs (mounted dynamically, not baked into the image)
+batches/
+archive_migration_validation/generated_packages/
+tmp/
+*.log

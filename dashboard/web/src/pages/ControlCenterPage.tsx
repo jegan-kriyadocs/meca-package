@@ -71,25 +71,33 @@ export function ControlCenterPage() {
       return;
     }
     let cancelled = false;
-    const poll = () => api.getSummary(activeBatchId).then((s) => !cancelled && setLiveSummary(s)).catch(() => undefined);
-    poll();
-    const interval = setInterval(poll, 3000);
+    const fetchSummary = () =>
+      api.getSummary(activeBatchId).then((s) => !cancelled && setLiveSummary(s)).catch(() => undefined);
+
+    fetchSummary();
+    if (!isActive) return; // Only poll repeatedly while migration is actively running
+
+    const interval = setInterval(fetchSummary, 3000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [activeBatchId]);
+  }, [activeBatchId, isActive]);
 
   useEffect(() => {
     let cancelled = false;
-    const poll = () => api.getRunLogs().then((l) => !cancelled && setLogLines(l.slice(-8))).catch(() => undefined);
-    poll();
-    const interval = setInterval(poll, 3000);
+    const fetchLogs = () =>
+      api.getRunLogs().then((l) => !cancelled && setLogLines(l.slice(-8))).catch(() => undefined);
+
+    fetchLogs();
+    if (!isActive) return; // Only poll repeatedly while migration is actively running
+
+    const interval = setInterval(fetchLogs, 3000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });

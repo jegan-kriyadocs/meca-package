@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from typing import TYPE_CHECKING
 
 from meca_engine.packaging.models import PackageStatus
@@ -85,10 +86,16 @@ class OutputRouter:
             self._write_conversion_report_json(destination, report)
         elif category == UPLOADED and hasattr(self._output_provider, "upload_package"):
             try:
-                self._output_provider.upload_package(article_id, destination)
+                remote_path = self._output_provider.upload_package(article_id, destination)
+                print(
+                    f"[INFO] [OutputRouter] Successfully transferred {article_id} to SFTP destination: {remote_path}",
+                    file=sys.stderr,
+                )
             except Exception as exc:
-                # Retain local files and record failure note
-                pass
+                print(
+                    f"[ERROR] [OutputRouter] Failed to upload {article_id} package to SFTP: {exc}",
+                    file=sys.stderr,
+                )
 
         return destination
 

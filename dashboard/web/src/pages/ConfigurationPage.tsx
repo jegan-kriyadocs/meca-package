@@ -156,8 +156,8 @@ export function ConfigurationPage() {
           <label className="field">
             Output Provider
             <select value={form.outputProvider} onChange={(e) => set("outputProvider", e.target.value)}>
-              <option value="LOCAL">LOCAL</option>
-              <option value="SFTP">SFTP (placeholder)</option>
+              <option value="LOCAL">LOCAL (Disk Only)</option>
+              <option value="SFTP">SFTP (Upload to Remote Server)</option>
             </select>
           </label>
           <label className="field">

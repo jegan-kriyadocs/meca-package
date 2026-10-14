@@ -208,13 +208,13 @@ class SftpOutputProvider(OutputProvider):
         if not zips:
             return None
         local_zip = zips[0]
-
         sftp = self._get_sftp()
         remote_target_dir = self.remote_dir.rstrip("/")
-        _ensure_remote_sftp_dir(sftp, remote_target_dir)
+        if remote_target_dir and remote_target_dir != ".":
+            _ensure_remote_sftp_dir(sftp, remote_target_dir)
 
-        remote_final_path = f"{remote_target_dir}/{local_zip.name}"
-        remote_tmp_path = f"{remote_target_dir}/.{local_zip.name}.tmp"
+        remote_final_path = f"{remote_target_dir}/{local_zip.name}" if remote_target_dir and remote_target_dir != "." else local_zip.name
+        remote_tmp_path = f"{remote_target_dir}/.{local_zip.name}.tmp" if remote_target_dir and remote_target_dir != "." else f".{local_zip.name}.tmp"
 
         # Atomic upload: upload to hidden .tmp first, then rename
         sftp.put(str(local_zip), remote_tmp_path)

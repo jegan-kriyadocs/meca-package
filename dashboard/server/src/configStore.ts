@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { load as parseYaml } from "js-yaml";
-import { MECA_ENGINE_ROOT } from "./paths.js";
+import { MECA_ENGINE_ROOT, getPythonBin, getPythonPathExtra } from "./paths.js";
 
-const PYTHON_BIN = process.env.DASHBOARD_PYTHON_BIN ?? "python3";
-const PYTHON_PATH_EXTRA = process.env.DASHBOARD_PYTHONPATH_EXTRA ?? "";
+const PYTHON_BIN = getPythonBin();
+const PYTHON_PATH_EXTRA = getPythonPathExtra();
 
 const RUNTIME_CONFIG_PATH = join(MECA_ENGINE_ROOT, "config", "runtime.yaml");
 

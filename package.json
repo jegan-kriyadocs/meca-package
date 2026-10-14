@@ -1,0 +1,12 @@
+{
+  "name": "meca-package",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NISO MECA Package Generation Platform and Dashboard",
+  "scripts": {
+    "install:all": "npm install --prefix dashboard && npm install --prefix dashboard/server && npm install --prefix dashboard/web",
+    "dev": "npm run dev --prefix dashboard",
+    "build": "npm run build --prefix dashboard",
+    "start": "npm run start --prefix dashboard"
+  }
+}

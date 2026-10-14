@@ -18,14 +18,16 @@ import {
   getBatchSummaryStats,
   getValidationStats,
 } from "./dataStore.js";
-import { listBatches, resolveBatchId, resolveReportFile } from "./batchStore.js";
+import { listBatches, resolveBatchId, resolveReportFile, latestBatchId } from "./batchStore.js";
 import { runController, getInputSummary } from "./runController.js";
 import { readRuntimeConfig, updateRuntimeConfig } from "./configStore.js";
 import { getArticleXml, XML_KINDS } from "./xmlStore.js";
 import { getNotes, setNote } from "./notesStore.js";
+import { reviewService, logService, checkDatabaseConnection, batchService } from "./db/index.js";
 import type { ArticleSummary, ReviewStatus } from "./types.js";
 
 export const router = Router();
+
 
 function requireBatch(req: Request, res: Response): string | null {
   const batchId = resolveBatchId(req.query.batch as string | undefined);
@@ -239,23 +241,47 @@ router.get("/articles/:id/download/xml/:kind", (req, res) => {
   res.send(xml.data);
 });
 
-router.get("/manual-review", (req, res) => {
+router.get("/manual-review", async (req, res) => {
   const batchId = requireBatch(req, res);
   if (!batchId) return;
-  const notes = getNotes(batchId);
+
+  // 1. Try fetching reviews from PostgreSQL
+  const dbReviews = await reviewService.getReviewsByBatchId(batchId);
+  const dbNotesMap: Record<string, { note: string; status: ReviewStatus }> = {};
+  for (const r of dbReviews) {
+    dbNotesMap[r.articleId] = {
+      note: r.note,
+      status: (r.status as ReviewStatus) ?? "pending",
+    };
+  }
+
+  // 2. Fallback / merge with local JSON notes if any
+  const fileNotes = getNotes(batchId);
+
   const entries = listManualReview(batchId).map((entry) => ({
     ...entry,
-    note: notes[entry.article_id]?.note ?? "",
-    status: notes[entry.article_id]?.status ?? "pending",
+    note: dbNotesMap[entry.article_id]?.note ?? fileNotes[entry.article_id]?.note ?? "",
+    status: dbNotesMap[entry.article_id]?.status ?? fileNotes[entry.article_id]?.status ?? "pending",
   }));
   res.json(entries);
 });
 
-router.put("/manual-review/:id/note", (req, res) => {
+router.put("/manual-review/:id/note", async (req, res) => {
   const batchId = requireBatch(req, res);
   if (!batchId) return;
   const { note, status } = req.body as { note?: string; status?: ReviewStatus };
+
+  // 1. Save to local JSON file for backward compatibility
   const notes = setNote(batchId, req.params.id, { note, status });
+
+  // 2. Persist to PostgreSQL database
+  await reviewService.upsertReview({
+    batchId,
+    articleId: req.params.id,
+    note,
+    status,
+  });
+
   res.json(notes[req.params.id]);
 });
 
@@ -312,8 +338,61 @@ router.get("/run/status", (_req, res) => {
   res.json({ ...runController.getState(), liveStatus: runController.getLiveStatus() });
 });
 
-router.get("/run/logs", (_req, res) => {
-  res.json(runController.getLogs());
+router.get("/run/logs", async (req, res) => {
+  const memoryLogs = runController.getLogs();
+  // If active run is in memory, return active stream
+  if (memoryLogs.length > 0) {
+    res.json(memoryLogs);
+    return;
+  }
+
+  // If memory buffer is empty (e.g. server restarted or querying past batch),
+  // retrieve from PostgreSQL batch_logs
+  const requestedBatch = req.query.batch as string | undefined;
+  const batchId = resolveBatchId(requestedBatch) ?? latestBatchId();
+  if (batchId) {
+    const dbLogs = await logService.getLogsByBatchId(batchId);
+    if (dbLogs.length > 0) {
+      res.json(dbLogs.map((l) => l.message));
+      return;
+    }
+  }
+
+  res.json([]);
+});
+
+// Database health check (checks PostgreSQL connectivity for local and AWS ECS)
+router.get("/health", async (_req, res) => {
+  const dbStatus = await checkDatabaseConnection();
+  const isProd = process.env.NODE_ENV === "production";
+  if (dbStatus.disabled) {
+    res.status(200).json({
+      status: "healthy",
+      database: "disabled (file-based mode)",
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+  res.status(dbStatus.ok ? 200 : 503).json({
+    status: dbStatus.ok ? "healthy" : "degraded",
+    database: dbStatus.ok ? "connected" : "disconnected",
+    timestamp: new Date().toISOString(),
+    // Never leak internal database host, user, or password stacktraces in production responses
+    ...(!dbStatus.ok && { error: isProd ? "Database unavailable" : dbStatus.error }),
+  });
+});
+
+// Historical batch logs from PostgreSQL
+router.get("/logs/:batchId", async (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : 500;
+  const logs = await logService.getLogsByBatchId(req.params.batchId, limit);
+  res.json(logs);
+});
+
+// List batches directly from PostgreSQL
+router.get("/db/batches", async (_req, res) => {
+  const batches = await batchService.listBatches();
+  res.json(batches);
 });
 
 router.get("/input/summary", async (req, res) => {

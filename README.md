@@ -43,11 +43,14 @@ cd meca-package
 ### 1. Set up the engine
 
 ```bash
+# Set up root environment (safe defaults for local dev):
+cp .env.local.example .env
+
+# Set up Python engine:
 cd meca-engine
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-cp .env.example .env             # safe defaults for local dev
 cd ..
 ```
 

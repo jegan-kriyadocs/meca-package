@@ -1,13 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MECA_ENGINE_ROOT, BATCHES_ROOT } from "./paths.js";
+import { MECA_ENGINE_ROOT, BATCHES_ROOT, getPythonBin, getPythonPathExtra } from "./paths.js";
+import { batchService, logService, articleService } from "./db/index.js";
+import { listArticles } from "./dataStore.js";
 
-// Portable by default (relies on `python3` already having the engine's
-// dependencies installed, same requirement as running the script by hand).
-// Override for environments where that isn't already true.
-const PYTHON_BIN = process.env.DASHBOARD_PYTHON_BIN ?? "python3";
-const PYTHON_PATH_EXTRA = process.env.DASHBOARD_PYTHONPATH_EXTRA ?? "";
+const PYTHON_BIN = getPythonBin();
+const PYTHON_PATH_EXTRA = getPythonPathExtra();
 
 export type RunPhase = "idle" | "starting" | "running" | "exited";
 export type ControlCommand = "run" | "pause" | "stop_after_current" | "cancel";
@@ -169,10 +168,16 @@ class RunController {
     this.logBuffer = [];
     writeFileSync(join(batchDir, "control.json"), JSON.stringify({ command: "run" }));
 
+    // Record batch start in PostgreSQL (async, non-blocking)
+    void batchService.createBatch({
+      id: batchId,
+      totalArticles: articleIds?.length ?? limit,
+    });
+
     const logStream = createWriteStream(join(batchDir, "service.log"), { flags: "a" });
 
-    child.stdout?.on("data", (chunk: Buffer) => this.captureLog(chunk, logStream));
-    child.stderr?.on("data", (chunk: Buffer) => this.captureLog(chunk, logStream));
+    child.stdout?.on("data", (chunk: Buffer) => this.captureLog(chunk, logStream, batchId));
+    child.stderr?.on("data", (chunk: Buffer) => this.captureLog(chunk, logStream, batchId, "WARN"));
 
     child.on("spawn", () => {
       this.phase = "running";
@@ -181,17 +186,60 @@ class RunController {
       this.phase = "exited";
       this.exitCode = code;
       logStream.end();
+
+      // Record batch completion in PostgreSQL (async, non-blocking)
+      const liveStatus = this.getLiveStatus();
+      void batchService.completeBatch(batchId, {
+        status: code === 0 ? "completed" : this.cancelled ? "cancelled" : "failed",
+        uploadedCount: liveStatus?.completed,
+        elapsedSeconds: liveStatus?.elapsed_seconds,
+      }).then(() => {
+        // Sync generated articles to PostgreSQL
+        try {
+          const generatedArticles = listArticles(batchId);
+          if (generatedArticles.length > 0) {
+            void articleService.syncArticles(
+              generatedArticles.map((art) => ({
+                id: art.article_id,
+                batchId,
+                journalCode: art.journal,
+                status: art.category,
+                confidenceScore: art.confidence_score,
+                warningsCount: art.warning_count,
+              })),
+            );
+          }
+        } catch (err) {
+          console.error(`Failed to sync articles to DB for batch ${batchId}:`, err);
+        }
+      });
     });
 
     return { batchId };
   }
 
-  private captureLog(chunk: Buffer, logStream: NodeJS.WritableStream): void {
+  private captureLog(
+    chunk: Buffer,
+    logStream: NodeJS.WritableStream,
+    batchId?: string,
+    level: "INFO" | "WARN" | "ERROR" = "INFO",
+  ): void {
     logStream.write(chunk);
     const lines = chunk.toString("utf-8").split("\n").filter(Boolean);
     this.logBuffer.push(...lines);
     if (this.logBuffer.length > LOG_BUFFER_LIMIT) {
       this.logBuffer = this.logBuffer.slice(-LOG_BUFFER_LIMIT);
+    }
+
+    // Persist logs in PostgreSQL in background
+    if (batchId && lines.length > 0) {
+      void logService.createManyLogs(
+        lines.map((msg) => ({
+          batchId,
+          level,
+          message: msg,
+        })),
+      );
     }
   }
 

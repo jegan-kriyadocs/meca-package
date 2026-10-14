@@ -1,0 +1,98 @@
+services:
+  # ==============================================================================
+  # 1. MECA PLATFORM APP (Node.js API + React Web UI + Python meca-engine)
+  # ==============================================================================
+  meca-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: meca-app
+    restart: unless-stopped
+    ports:
+      # Automatically takes PORT from your .env file, or defaults to 4000
+      - "${PORT:-4000}:${PORT:-4000}"
+
+    # Local storage mounts
+    volumes:
+      - ./Input:/app/Input
+      - ./archive_migration_validation:/app/archive_migration_validation
+      - ./batches:/app/dashboard/server/batches
+
+    # Wait for PostgreSQL to be ready before starting the app
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      - PORT=${PORT:-4000}
+      - NODE_ENV=development
+
+      # --------------------------------------------------------------------------
+      # LOCAL DATABASE CONFIGURATION (Default active for local testing)
+      # --------------------------------------------------------------------------
+      - DATABASE_URL=postgres://meca_user:meca_password@postgres:5432/meca_db
+
+      # --------------------------------------------------------------------------
+      # PRODUCTION CONFIGURATION (AWS RDS & S3 - Uncomment/use for AWS Deployment)
+      # In AWS ECS/Fargate, inject these via AWS Secrets Manager or Parameter Store
+      # --------------------------------------------------------------------------
+      # - NODE_ENV=production
+      # - MECA_ENGINE_ENVIRONMENT=production
+      # - DATABASE_URL=postgresql://${RDS_USERNAME}:${RDS_PASSWORD}@${RDS_ENDPOINT}:5432/${RDS_DB_NAME}?sslmode=require
+      # - AWS_REGION=us-east-1
+      # - S3_BUCKET_NAME=meca-input-bucket
+      # - S3_INPUT_PREFIX=submissions/
+
+    # Health check dynamically checks whatever PORT is configured
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:$${PORT:-4000}/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # --------------------------------------------------------------------------
+    # PRODUCTION RESOURCE LIMITS & LOGGING (DevOps can enable in production)
+    # --------------------------------------------------------------------------
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "2.0"
+    #       memory: 4096M
+    #     reservations:
+    #       cpus: "0.5"
+    #       memory: 1024M
+    # logging:
+    #   driver: "json-file"
+    #   options:
+    #     max-size: "10m"
+    #     max-file: "3"
+
+  # ==============================================================================
+  # 2. LOCAL POSTGRESQL DATABASE
+  # Provides local database storage for testing.
+  # (In AWS production, you will use AWS RDS PostgreSQL instead of this container)
+  # ==============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: meca-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=meca_user
+      - POSTGRES_PASSWORD=meca_password
+      - POSTGRES_DB=meca_db
+    ports:
+      # Exposes 5432 to your Mac so you can connect via DBeaver, pgAdmin, or psql
+      - "5432:5432"
+    volumes:
+      # Persistent volume on your local machine so data is never lost on restart
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meca_user -d meca_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    name: meca_postgres_data
